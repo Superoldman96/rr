@@ -40,6 +40,7 @@
 
 #include "AddressSpace.h"
 #include "AutoRemoteSyscalls.h"
+#include "CPUs.h"
 #include "Flags.h"
 #include "PerfCounters.h"
 #include "ReplaySession.h"
@@ -1916,15 +1917,6 @@ vector<string> current_env() {
   return env;
 }
 
-int get_num_cpus() {
-  cpu_set_t affinity_mask;
-  int ret = sched_getaffinity(0, sizeof(affinity_mask), &affinity_mask);
-  if (ret < 0) {
-    FATAL() << "sched_getaffinity failed";
-  }
-  return CPU_COUNT(&affinity_mask);
-}
-
 const uint8_t rdtsc_insn[2] = { 0x0f, 0x31 };
 
 static const uint8_t rdtscp_insn[] = { 0x0f, 0x01, 0xf9 };
@@ -2049,21 +2041,7 @@ int choose_cpu(BindCPU bind_cpu, ScopedFd &cpu_lock_fd_out) {
     return -1;
   }
 
-  // Find out which CPUs we're allowed to run on at all.
-  // sched_getaffinity intersects the task's `cpu_mask`
-  // (/proc/.../status Cpus_allowed_list) with `cpu_active_mask`
-  // which is almost the same as /sys/devices/system/cpu/online
-  cpu_set_t affinity_mask;
-  int ret = sched_getaffinity(0, sizeof(affinity_mask), &affinity_mask);
-  if (ret < 0) {
-    FATAL() << "sched_getaffinity failed";
-  }
-  std::vector<int> cpus;
-  for (int i = 0; i < CPU_SETSIZE; ++i) {
-    if (CPU_ISSET(i, &affinity_mask) && PerfCounters::support_cpu(i)) {
-      cpus.push_back(i);
-    }
-  }
+  vector<int> cpus = CPUs::get().initial_affinity();
   if (cpus.empty()) {
     FATAL() << "Can't find a valid CPU to run on";
   }
